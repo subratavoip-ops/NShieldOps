@@ -15,6 +15,7 @@ const app = express();
 const port = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === "production";
 const dataDir = path.join(__dirname, "data");
+const DEVICE_HEARTBEAT_SECRET = process.env.DEVICE_HEARTBEAT_SECRET || "demo-local-secret";
 
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("Set SESSION_SECRET in .env to a random value of at least 32 characters.");
@@ -45,11 +46,28 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
+  CREATE TABLE IF NOT EXISTS device_heartbeats (
+    id TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL UNIQUE,
+    device_name TEXT,
+    os TEXT,
+    ip_address TEXT,
+    uptime TEXT,
+    cpu_percent REAL,
+    memory_percent REAL,
+    status TEXT NOT NULL DEFAULT 'offline',
+    last_seen INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
   ON password_reset_tokens(user_id);
+
+  CREATE INDEX IF NOT EXISTS idx_device_heartbeats_last_seen
+  ON device_heartbeats(last_seen DESC);
 `);
 
-app.use(express.json({ limit: "10kb" }));
+app.use(express.json({ limit: "50kb" }));
 
 app.use(session({
   name: "nshieldops.sid",
@@ -123,6 +141,12 @@ function saveSession(req) {
 
 function isValidEmail(email) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function getDeviceStatus(device) {
+  if (!device || !device.last_seen) return "offline";
+  const thresholdMs = 180000;
+  return Date.now() - Number(device.last_seen) <= thresholdMs ? "online" : "offline";
 }
 
 app.post("/api/auth/signup", authLimiter, async (req, res, next) => {
@@ -252,7 +276,6 @@ app.post("/api/auth/forgot-password", resetLimiter, async (req, res) => {
     WHERE email = ?
   `).get(email);
 
-  // Return the same response whether or not the account exists.
   if (!user) {
     return res.status(202).json(genericResponse);
   }
@@ -295,7 +318,6 @@ app.post("/api/auth/forgot-password", resetLimiter, async (req, res) => {
       console.error("Password reset email is not configured.");
     }
   } catch (error) {
-    // Don't reveal account or email-delivery details in the response.
     console.error("Could not process password reset request:", error);
   }
 
@@ -357,6 +379,89 @@ app.post("/api/auth/reset-password", resetLimiter, async (req, res, next) => {
   }
 });
 
+app.get("/api/devices", (req, res) => {
+  const devices = db.prepare(`
+    SELECT *
+    FROM device_heartbeats
+    ORDER BY last_seen DESC
+  `).all();
+
+  return res.json(devices.map(device => ({
+    ...device,
+    status: getDeviceStatus(device),
+    last_seen: Number(device.last_seen)
+  })));
+});
+
+app.post("/api/devices/heartbeat", (req, res, next) => {
+  try {
+    const secret = typeof req.headers["x-agent-key"] === "string"
+      ? req.headers["x-agent-key"]
+      : "";
+
+    if (!secret || secret !== DEVICE_HEARTBEAT_SECRET) {
+      return res.status(401).json({ error: "Unauthorized." });
+    }
+
+    const payload = req.body && typeof req.body === "object" ? req.body : {};
+    const hostname = String(payload.hostname || "").trim();
+
+    if (!hostname) {
+      return res.status(400).json({ error: "hostname is required." });
+    }
+
+    const now = Date.now();
+    const deviceName = String(payload.device_name || hostname).trim() || hostname;
+    const row = {
+      id: crypto.randomUUID(),
+      hostname,
+      device_name: deviceName,
+      os: String(payload.os || "Unknown").trim(),
+      ip_address: String(payload.ip_address || "").trim(),
+      uptime: String(payload.uptime || "").trim(),
+      cpu_percent: Number.isFinite(Number(payload.cpu_percent)) ? Number(payload.cpu_percent) : 0,
+      memory_percent: Number.isFinite(Number(payload.memory_percent)) ? Number(payload.memory_percent) : 0,
+      status: "online",
+      last_seen: now
+    };
+
+    db.prepare(`
+      INSERT INTO device_heartbeats (
+        id, hostname, device_name, os, ip_address, uptime, cpu_percent, memory_percent, status, last_seen
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(hostname) DO UPDATE SET
+        device_name = excluded.device_name,
+        os = excluded.os,
+        ip_address = excluded.ip_address,
+        uptime = excluded.uptime,
+        cpu_percent = excluded.cpu_percent,
+        memory_percent = excluded.memory_percent,
+        status = excluded.status,
+        last_seen = excluded.last_seen
+    `).run(
+      row.id,
+      hostname,
+      row.device_name,
+      row.os,
+      row.ip_address,
+      row.uptime,
+      row.cpu_percent,
+      row.memory_percent,
+      row.status,
+      row.last_seen
+    );
+
+    return res.status(202).json({
+      ok: true,
+      status: "online",
+      hostname,
+      last_seen: now
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 app.use((error, req, res, next) => {
@@ -367,4 +472,5 @@ app.use((error, req, res, next) => {
 
 app.listen(port, () => {
   console.log(`NShieldOps is running at http://localhost:${port}`);
+  console.log(`Heartbeat secret: ${DEVICE_HEARTBEAT_SECRET.length ? "configured" : "missing"}`);
 });
