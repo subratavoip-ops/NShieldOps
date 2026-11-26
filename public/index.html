@@ -109,16 +109,10 @@
       <defs>
         <linearGradient id="spiderMetal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dce8f5" /><stop offset=".32" stop-color="#859bb5" /><stop offset=".68" stop-color="#425a76" /><stop offset="1" stop-color="#c5d3e2" /></linearGradient>
         <linearGradient id="webSilk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a9c9ed" /><stop offset=".5" stop-color="#607f9f" /><stop offset="1" stop-color="#38536f" /></linearGradient>
-        <radialGradient id="spiderBody" cx=".35" cy=".25" r=".85"><stop offset="0" stop-color="#d2dfec" /><stop offset=".35" stop-color="#7e94ae" /><stop offset="1" stop-color="#26384e" /></radialGradient>
       </defs>
       <g fill="none" stroke="url(#webSilk)" stroke-width="1.15" opacity=".8">
         <path d="M1440 0 L970 0" /><path d="M1440 0 L1015 95" /><path d="M1440 0 L1090 205" /><path d="M1440 0 L1190 330" /><path d="M1440 0 L1320 490" /><path d="M1440 0 L1440 610" />
         <path d="M1440 0 L1055 45" /><path d="M1440 0 L1065 145" /><path d="M1440 0 L1140 270" /><path d="M1440 0 L1255 410" /><path d="M1440 0 L1380 540" />
-      </g>
-      <g fill="none" stroke="url(#webSilk)" stroke-linecap="round">
-        <path d="M1365 0 C1378 42 1406 76 1440 91" stroke-width="1.4" opacity=".72" /><path d="M1295 0 C1319 75 1365 132 1440 164" stroke-width="1.35" opacity=".66" />
-        <path d="M1215 0 C1251 109 1323 187 1440 232" stroke-width="1.3" opacity=".62" /><path d="M1130 0 C1183 145 1283 242 1440 304" stroke-width="1.3" opacity=".58" />
-        <path d="M1050 0 C1117 178 1244 292 1440 374" stroke-width="1.25" opacity=".54" /><path d="M985 0 C1064 212 1208 340 1440 445" stroke-width="1.2" opacity=".5" />
       </g>
       <g transform="translate(1135 260)" fill="none" stroke="url(#spiderMetal)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M-13 -10 L-35 -31 L-59 -39 L-82 -61" /><path d="M-20 -5 L-49 -12 L-74 -9 L-101 -23" />
@@ -151,11 +145,8 @@
   </header>
 
   <main class="page">
-    <!-- AUTH VIEW (Login/Signup/Forgot) -->
     <section id="authView" class="auth-wrap hidden">
       <div class="panel">
-        
-        <!-- LOGIN / SIGNUP -->
         <div id="loginSection">
           <h1 id="authTitle">Welcome back</h1>
           <p id="authSubtitle" class="subtitle">Sign in to manage your projects.</p>
@@ -182,7 +173,6 @@
           </div>
         </div>
 
-        <!-- FORGOT PASSWORD -->
         <div id="forgotSection" class="hidden">
           <h1>Reset password</h1>
           <p class="subtitle">Enter your email and we'll send you a link to reset your password.</p>
@@ -200,7 +190,6 @@
           </p>
         </div>
 
-        <!-- RESET PASSWORD -->
         <div id="resetSection" class="hidden">
           <h1>Create new password</h1>
           <p class="subtitle">Enter a strong new password for your account.</p>
@@ -214,11 +203,9 @@
             <button id="resetSubmit" class="btn primary full" type="submit">Reset Password</button>
           </form>
         </div>
-
       </div>
     </section>
 
-    <!-- PROJECTS VIEW -->
     <section id="projectsView" class="hidden">
       <div class="permissions-row">
         <div>
@@ -234,7 +221,6 @@
       <div id="emptyProjects" class="empty hidden"><h2>No projects assigned</h2></div>
     </section>
 
-    <!-- CREATE PROJECT VIEW -->
     <section id="createView" class="auth-wrap hidden">
       <button class="text-btn back-link" type="button" data-go-projects>← Back to projects</button>
       <div class="panel">
@@ -259,7 +245,6 @@
       </div>
     </section>
 
-    <!-- DASHBOARD VIEW -->
     <section id="dashboardView" class="hidden">
       <button class="text-btn back-link" type="button" data-go-projects>← All projects</button>
       <div class="dashboard-head">
@@ -314,7 +299,6 @@
     </section>
   </main>
 
-  <!-- ADD ASSET MODAL -->
   <div id="assetModal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-panel">
       <div class="modal-head">
@@ -358,7 +342,6 @@
       return res.status === 204 ? null : res.json();
     }
 
-    // --- Auth Views Navigation ---
     function showAuthSection(sectionId) {
       ["loginSection", "forgotSection", "resetSection"].forEach(id => {
         $(id).classList.toggle("hidden", id !== sectionId);
@@ -376,24 +359,10 @@
       showAuthSection("loginSection");
     });
 
-    // --- Login/Signup ---
     function updateUserStatus() {
       if (!currentUser) return $("userActions").classList.add("hidden");
       $("userLabel").textContent = `${currentUser.name} (${currentUser.email})`;
       $("userActions").classList.remove("hidden");
-    }
-
-    async function loadSession() {
-      try {
-        const data = await api("/api/auth/me");
-        currentUser = data.user;
-        updateUserStatus();
-        renderProjects();
-        showView("projectsView");
-      } catch {
-        showAuthSection("loginSection");
-        showView("authView");
-      }
     }
 
     $("authSwitch").addEventListener("click", () => {
@@ -435,7 +404,6 @@
       window.location.reload();
     });
 
-    // --- Forgot Password ---
     $("forgotForm").addEventListener("submit", async e => {
       e.preventDefault();
       $("forgotError").textContent = "";
@@ -458,7 +426,6 @@
       }
     });
 
-    // --- Reset Password ---
     $("resetForm").addEventListener("submit", async e => {
       e.preventDefault();
       $("resetError").textContent = "";
@@ -490,7 +457,6 @@
       }
     });
 
-    // --- Projects ---
     async function renderProjects() {
       const grid = $("projectsGrid");
       try {
@@ -535,7 +501,6 @@
       }
     });
 
-    // --- Dashboard ---
     function openDashboard(id, name) {
       currentProjectId = id;
       $("dashboardProjectName").textContent = name;
@@ -677,14 +642,30 @@
       }
     }
 
-    // --- Boot ---
-    const urlToken = new URLSearchParams(window.location.search).get("token");
-    if (urlToken) {
-      showAuthSection("resetSection");
-      showView("authView");
-    } else {
-      loadSession();
+    // --- Boot sequence ---
+    async function boot() {
+      const urlToken = new URLSearchParams(window.location.search).get("token");
+      
+      if (urlToken) {
+        showAuthSection("resetSection");
+        showView("authView");
+        return;
+      }
+
+      try {
+        const data = await api("/api/auth/me");
+        currentUser = data.user;
+        updateUserStatus();
+        renderProjects();
+        showView("projectsView");
+      } catch (err) {
+        currentUser = null;
+        showAuthSection("loginSection");
+        showView("authView");
+      }
     }
+
+    boot();
   </script>
 </body>
 </html>
