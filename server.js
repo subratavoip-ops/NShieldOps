@@ -21,7 +21,7 @@ if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
   throw new Error("Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in .env");
 }
 
-// Turso Setup (Reads directly from .env)
+// Turso Setup
 const sqlite = createClient({
   url: process.env.TURSO_DATABASE_URL,
   authToken: process.env.TURSO_AUTH_TOKEN,
@@ -109,8 +109,69 @@ initDb().catch(console.error);
 
 app.use(express.json({ limit: "10kb" }));
 
+// ============================================================
+// CUSTOM TURSO SESSION STORE
+// ============================================================
+const { Store } = require("express-session");
+
+class TursoSessionStore extends Store {
+  constructor(options) {
+    super(options);
+    this.client = options.client;
+    this.tableName = options.tableName || "sessions";
+    this.initTable().catch(console.error);
+  }
+
+  async initTable() {
+    await this.client.execute(`
+      CREATE TABLE IF NOT EXISTS ${this.tableName} (
+        sid TEXT PRIMARY KEY,
+        sess TEXT NOT NULL,
+        expire INTEGER NOT NULL
+      );
+    `);
+  }
+
+  async get(sid, callback) {
+    try {
+      const result = await this.client.execute({
+        sql: `SELECT sess FROM ${this.tableName} WHERE sid = ? AND expire > ?`,
+        args: [sid, Date.now()]
+      });
+      if (!result.rows[0]) return callback(null, null);
+      callback(null, JSON.parse(result.rows[0].sess));
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  async set(sid, sessionData, callback) {
+    try {
+      const expire = sessionData.cookie.expires ? new Date(sessionData.cookie.expires).getTime() : Date.now() + 86400000;
+      await this.client.execute({
+        sql: `INSERT INTO ${this.tableName} (sid, sess, expire) VALUES (?, ?, ?)
+              ON CONFLICT(sid) DO UPDATE SET sess = excluded.sess, expire = excluded.expire`,
+        args: [sid, JSON.stringify(sessionData), expire]
+      });
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  async destroy(sid, callback) {
+    try {
+      await this.client.execute({ sql: `DELETE FROM ${this.tableName} WHERE sid = ?`, args: [sid] });
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+}
+
 app.use(session({
   name: "nshieldops.sid",
+  store: new TursoSessionStore({ client: sqlite }), 
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
