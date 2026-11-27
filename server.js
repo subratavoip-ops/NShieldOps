@@ -10,6 +10,7 @@ const { rateLimit } = require("express-rate-limit");
 const nodemailer = require("nodemailer");
 
 const app = express();
+app.set("trust proxy", 1); // Required for Render
 const port = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -104,6 +105,15 @@ async function initDb() {
       detail   TEXT
     );
   `);
+
+  // NEW: Create the sessions table explicitly
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      sid TEXT PRIMARY KEY,
+      sess TEXT NOT NULL,
+      expire INTEGER NOT NULL
+    );
+  `);
 }
 initDb().catch(console.error);
 
@@ -119,17 +129,6 @@ class TursoSessionStore extends Store {
     super(options);
     this.client = options.client;
     this.tableName = options.tableName || "sessions";
-    this.initTable().catch(console.error);
-  }
-
-  async initTable() {
-    await this.client.execute(`
-      CREATE TABLE IF NOT EXISTS ${this.tableName} (
-        sid TEXT PRIMARY KEY,
-        sess TEXT NOT NULL,
-        expire INTEGER NOT NULL
-      );
-    `);
   }
 
   async get(sid, callback) {
@@ -175,7 +174,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: "lax", secure: isProduction, maxAge: 8 * 60 * 60 * 1000 }
+  cookie: { 
+    httpOnly: true, 
+    sameSite: isProduction ? "none" : "lax", 
+    secure: isProduction, 
+    maxAge: 8 * 60 * 60 * 1000 
+  }
 }));
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, message: { error: "Too many attempts." } });
