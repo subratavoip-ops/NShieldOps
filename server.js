@@ -1,110 +1,116 @@
 require("dotenv").config();
 
 const crypto = require("node:crypto");
-const fs = require("node:fs");
 const path = require("node:path");
 const express = require("express");
-const Database = require("better-sqlite3");
+const { createClient } = require("@libsql/client");
 const bcrypt = require("bcryptjs");
 const session = require("express-session");
-const SQLiteStore = require("connect-sqlite3")(session);
 const { rateLimit } = require("express-rate-limit");
 const nodemailer = require("nodemailer");
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === "production";
-const dataDir = process.env.DB_DIR || path.join(__dirname, "data");
 
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("Set SESSION_SECRET in .env to a random value of at least 32 characters.");
 }
 
-fs.mkdirSync(dataDir, { recursive: true });
+if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
+  throw new Error("Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in .env");
+}
 
-const sqlite = new Database(path.join(dataDir, "nshieldops.sqlite"));
-sqlite.pragma("journal_mode = WAL");
-sqlite.pragma("foreign_keys = ON");
+// Turso Setup (Reads directly from .env)
+const sqlite = createClient({
+  url: process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
-// ---------- schema ----------
-sqlite.exec(`
-  CREATE TABLE IF NOT EXISTS projects (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    type TEXT,
-    created_at TEXT NOT NULL
-  );
+// Initialize Schema
+async function initDb() {
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      type TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      project_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    project_id TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-  );
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at INTEGER NOT NULL,
+      used_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+  `);
 
-  CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    expires_at INTEGER NOT NULL,
-    used_at INTEGER,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS assets (
+      asset_id    TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      type        TEXT,
+      os          TEXT,
+      owner       TEXT,
+      project_id  TEXT,
+      user_id     TEXT,
+      hostname    TEXT,
+      mac         TEXT,
+      cpu         REAL,
+      mem         REAL,
+      disk        REAL,
+      uptime      INTEGER,
+      status      TEXT NOT NULL DEFAULT 'pending',
+      token_hash  TEXT,
+      created_at  TEXT NOT NULL,
+      enrolled_at TEXT,
+      last_seen   TEXT
+    );
+  `);
 
-  CREATE TABLE IF NOT EXISTS assets (
-    asset_id    TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    type        TEXT,
-    os          TEXT,
-    owner       TEXT,
-    project_id  TEXT,
-    user_id     TEXT,
-    hostname    TEXT,
-    mac         TEXT,
-    cpu         REAL,
-    mem         REAL,
-    disk        REAL,
-    uptime      INTEGER,
-    status      TEXT NOT NULL DEFAULT 'pending',
-    token_hash  TEXT,
-    created_at  TEXT NOT NULL,
-    enrolled_at TEXT,
-    last_seen   TEXT,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-  );
-  CREATE INDEX IF NOT EXISTS idx_assets_token ON assets(token_hash);
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS enroll_sessions (
+      session_id  TEXT PRIMARY KEY,
+      asset_id    TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      expires_at  TEXT NOT NULL,
+      claimed_at  TEXT
+    );
+  `);
 
-  CREATE TABLE IF NOT EXISTS enroll_sessions (
-    session_id  TEXT PRIMARY KEY,
-    asset_id    TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    expires_at  TEXT NOT NULL,
-    claimed_at  TEXT,
-    FOREIGN KEY (asset_id) REFERENCES assets(asset_id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS asset_events (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    asset_id TEXT NOT NULL,
-    ts       TEXT NOT NULL,
-    type     TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    detail   TEXT,
-    FOREIGN KEY (asset_id) REFERENCES assets(asset_id) ON DELETE CASCADE
-  );
-`);
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS asset_events (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      asset_id TEXT NOT NULL,
+      ts       TEXT NOT NULL,
+      type     TEXT NOT NULL,
+      severity TEXT NOT NULL,
+      detail   TEXT
+    );
+  `);
+}
+initDb().catch(console.error);
 
 app.use(express.json({ limit: "10kb" }));
 
 app.use(session({
   name: "nshieldops.sid",
-  store: new SQLiteStore({ db: "sessions.sqlite", dir: dataDir }),
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -131,11 +137,14 @@ function requireUser(req, res, next) {
   next();
 }
 
-function requireAssetToken(req, res, next) {
+async function requireAssetToken(req, res, next) {
   const h = req.headers.authorization || "";
   const m = h.match(/^Bearer\s+(.+)$/);
   if (!m) return res.status(401).json({ error: "missing bearer token" });
-  const row = sqlite.prepare(`SELECT * FROM assets WHERE token_hash = ?`).get(sha256(m[1]));
+  
+  const result = await sqlite.execute({ sql: "SELECT * FROM assets WHERE token_hash = ?", args: [sha256(m[1])] });
+  const row = result.rows[0];
+  
   if (!row) return res.status(401).json({ error: "invalid token" });
   req.asset = row;
   next();
@@ -152,13 +161,15 @@ app.post("/api/auth/signup", async (req, res, next) => {
     const id = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(password, 12);
     
-    sqlite.prepare(`INSERT INTO users (id, name, email, password_hash, project_id) VALUES (?, ?, ?, ?, ?)`)
-      .run(id, name, email, passwordHash, project_id || null);
+    await sqlite.execute({
+      sql: `INSERT INTO users (id, name, email, password_hash, project_id) VALUES (?, ?, ?, ?, ?)`,
+      args: [id, name, email, passwordHash, project_id || null]
+    });
       
     req.session.userId = id;
     res.status(201).json({ user: { id, name, email, project_id } });
   } catch (e) {
-    if (e.code === "SQLITE_CONSTRAINT_UNIQUE") return res.status(409).json({ error: "Email already exists." });
+    if (e.message && e.message.includes("UNIQUE constraint failed")) return res.status(409).json({ error: "Email already exists." });
     next(e); 
   }
 });
@@ -166,7 +177,9 @@ app.post("/api/auth/signup", async (req, res, next) => {
 app.post("/api/auth/login", async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    const user = sqlite.prepare(`SELECT * FROM users WHERE email = ?`).get(email);
+    const result = await sqlite.execute({ sql: "SELECT * FROM users WHERE email = ?", args: [email] });
+    const user = result.rows[0];
+    
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
@@ -175,9 +188,10 @@ app.post("/api/auth/login", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-app.get("/api/auth/me", (req, res) => {
+app.get("/api/auth/me", async (req, res) => {
   if (!req.session.userId) return res.status(401).json({ error: "Not signed in." });
-  const user = sqlite.prepare(`SELECT id, name, email, project_id FROM users WHERE id = ?`).get(req.session.userId);
+  const result = await sqlite.execute({ sql: "SELECT id, name, email, project_id FROM users WHERE id = ?", args: [req.session.userId] });
+  const user = result.rows[0];
   if (!user) return res.status(401).json({ error: "Not signed in." });
   res.json({ user });
 });
@@ -186,12 +200,13 @@ app.post("/api/auth/logout", (req, res) => {
   req.session.destroy(() => res.status(204).end());
 });
 
-// --- PASSWORD RESET ---
 app.post("/api/auth/forgot-password", resetLimiter, async (req, res) => {
   const genericResponse = { message: "If an account exists for that email, password reset instructions will be sent." };
   const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
   
-  const user = sqlite.prepare(`SELECT id, name, email FROM users WHERE email = ?`).get(email);
+  const result = await sqlite.execute({ sql: "SELECT id, name, email FROM users WHERE email = ?", args: [email] });
+  const user = result.rows[0];
+  
   if (!user) return res.status(202).json(genericResponse);
 
   try {
@@ -201,9 +216,11 @@ app.post("/api/auth/forgot-password", resetLimiter, async (req, res) => {
     const expiresAt = now + 30 * 60 * 1000;
     const resetUrl = new URL(`/?token=${encodeURIComponent(rawToken)}`, baseUrl()).toString();
 
-    sqlite.prepare(`UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL`).run(now, user.id);
-    sqlite.prepare(`INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)`)
-      .run(crypto.randomUUID(), user.id, tokenHash, expiresAt, now);
+    await sqlite.execute({ sql: "UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL", args: [now, user.id] });
+    await sqlite.execute({
+      sql: "INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+      args: [crypto.randomUUID(), user.id, tokenHash, expiresAt, now]
+    });
 
     if (mailer) {
       await mailer.sendMail({
@@ -213,7 +230,6 @@ app.post("/api/auth/forgot-password", resetLimiter, async (req, res) => {
         text: `Use this link within 30 minutes to reset your NShieldOps password:\n\n${resetUrl}\n\nIf you did not request this, you can ignore this email.`
       });
     } else if (!isProduction) {
-      // Dev mode: print to terminal
       console.log("\n============================================================");
       console.log(`🔑 PASSWORD RESET LINK FOR: ${user.email}`);
       console.log(`${resetUrl}`);
@@ -238,17 +254,19 @@ app.post("/api/auth/reset-password", resetLimiter, async (req, res, next) => {
     const passwordHash = await bcrypt.hash(password, 12);
     const now = Date.now();
 
-    const resetPassword = sqlite.transaction(() => {
-      const record = sqlite.prepare(`SELECT id, user_id FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`)
-        .get(tokenHash, now);
-      if (!record) return false;
-
-      sqlite.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(passwordHash, record.user_id);
-      sqlite.prepare(`UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL`).run(now, record.user_id);
-      return true;
+    const recordRes = await sqlite.execute({
+      sql: "SELECT id, user_id FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+      args: [tokenHash, now]
     });
+    const record = recordRes.rows[0];
 
-    if (!resetPassword()) return res.status(400).json({ error: "Invalid or expired link." });
+    if (!record) return res.status(400).json({ error: "Invalid or expired link." });
+
+    await sqlite.batch([
+      { sql: "UPDATE users SET password_hash = ? WHERE id = ?", args: [passwordHash, record.user_id] },
+      { sql: "UPDATE password_reset_tokens SET used_at = ? WHERE user_id = ? AND used_at IS NULL", args: [now, record.user_id] }
+    ]);
+
     res.json({ message: "Password reset successfully. You can now sign in." });
   } catch (error) { return next(error); }
 });
@@ -256,89 +274,114 @@ app.post("/api/auth/reset-password", resetLimiter, async (req, res, next) => {
 // ============================================================
 // USER ROUTES
 // ============================================================
-app.get("/api/users", requireUser, (req, res) => {
-  const user = sqlite.prepare(`SELECT * FROM users WHERE id = ?`).get(req.userId);
+app.get("/api/users", requireUser, async (req, res) => {
+  const userRes = await sqlite.execute({ sql: "SELECT * FROM users WHERE id = ?", args: [req.userId] });
+  const user = userRes.rows[0];
+  
   if (!user.project_id) {
-    return res.json(sqlite.prepare(`SELECT id, name, email, project_id FROM users ORDER BY created_at ASC`).all());
+    const allRes = await sqlite.execute("SELECT id, name, email, project_id FROM users ORDER BY created_at ASC");
+    return res.json(allRes.rows);
   }
-  res.json(sqlite.prepare(`SELECT id, name, email, project_id FROM users WHERE project_id = ?`).all(user.project_id));
+  const projRes = await sqlite.execute({ sql: "SELECT id, name, email, project_id FROM users WHERE project_id = ?", args: [user.project_id] });
+  res.json(projRes.rows);
 });
 
-app.delete("/api/users/:id", requireUser, (req, res) => {
+app.delete("/api/users/:id", requireUser, async (req, res) => {
   if (req.params.id === req.userId) return res.status(400).json({ error: "Cannot delete yourself." });
-  sqlite.prepare(`DELETE FROM users WHERE id = ?`).run(req.params.id);
+  await sqlite.execute({ sql: "DELETE FROM users WHERE id = ?", args: [req.params.id] });
   res.json({ ok: true });
 });
 
 // ============================================================
 // PROJECT ROUTES
 // ============================================================
-app.get("/api/projects", requireUser, (req, res) => {
-  const user = sqlite.prepare(`SELECT project_id FROM users WHERE id = ?`).get(req.userId);
+app.get("/api/projects", requireUser, async (req, res) => {
+  const userRes = await sqlite.execute({ sql: "SELECT project_id FROM users WHERE id = ?", args: [req.userId] });
+  const user = userRes.rows[0];
+  
   if (user.project_id) {
-    const p = sqlite.prepare(`SELECT * FROM projects WHERE id = ?`).get(user.project_id);
-    return res.json(p ? [p] : []);
+    const pRes = await sqlite.execute({ sql: "SELECT * FROM projects WHERE id = ?", args: [user.project_id] });
+    return res.json(pRes.rows);
   }
-  res.json(sqlite.prepare(`SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC`).all(req.userId));
+  const allRes = await sqlite.execute({ sql: "SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC", args: [req.userId] });
+  res.json(allRes.rows);
 });
 
-app.post("/api/projects", requireUser, (req, res) => {
+app.post("/api/projects", requireUser, async (req, res) => {
   const { name, type } = req.body;
   if (!name) return res.status(400).json({ error: "Project name required" });
   const id = crypto.randomUUID();
-  sqlite.prepare(`INSERT INTO projects (id, user_id, name, type, created_at) VALUES (?, ?, ?, ?, ?)`)
-    .run(id, req.userId, name, type || "Security operations", nowIso());
+  await sqlite.execute({
+    sql: "INSERT INTO projects (id, user_id, name, type, created_at) VALUES (?, ?, ?, ?, ?)",
+    args: [id, req.userId, name, type || "Security operations", nowIso()]
+  });
   res.json({ id, name, type });
 });
 
 // ============================================================
 // ASSET ENROLLMENT + HEARTBEAT
 // ============================================================
-app.post("/api/enroll/sessions", requireUser, (req, res) => {
+app.post("/api/enroll/sessions", requireUser, async (req, res) => {
   const { name, type, os, project_id } = req.body;
   const asset_id = crypto.randomUUID();
   const session_id = crypto.randomBytes(18).toString("hex");
   const created = new Date();
   const expires = new Date(created.getTime() + 30 * 60 * 1000);
 
-  sqlite.prepare(`INSERT INTO assets (asset_id, name, type, os, project_id, user_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`)
-    .run(asset_id, name, type || null, os || null, project_id || null, req.userId, created.toISOString());
-
-  sqlite.prepare(`INSERT INTO enroll_sessions (session_id, asset_id, created_at, expires_at) VALUES (?, ?, ?, ?)`)
-    .run(session_id, asset_id, created.toISOString(), expires.toISOString());
+  await sqlite.batch([
+    {
+      sql: "INSERT INTO assets (asset_id, name, type, os, project_id, user_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+      args: [asset_id, name, type || null, os || null, project_id || null, req.userId, created.toISOString()]
+    },
+    {
+      sql: "INSERT INTO enroll_sessions (session_id, asset_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+      args: [session_id, asset_id, created.toISOString(), expires.toISOString()]
+    }
+  ]);
 
   const enrollUrl = `${baseUrl()}/enroll/${session_id}`;
   res.json({ asset_id, enroll_url: enrollUrl, command: `python agent.py --enroll ${enrollUrl}` });
 });
 
-app.get("/enroll/:session_id", (req, res) => {
-  const s = sqlite.prepare(`SELECT * FROM enroll_sessions WHERE session_id = ?`).get(req.params.session_id);
+app.get("/enroll/:session_id", async (req, res) => {
+  const sRes = await sqlite.execute({ sql: "SELECT * FROM enroll_sessions WHERE session_id = ?", args: [req.params.session_id] });
+  const s = sRes.rows[0];
   if (!s) return res.status(404).send("Invalid link");
+  
   const cmd = `python agent.py --enroll ${baseUrl()}/enroll/${req.params.session_id}`;
   res.send(`<body style="background:#0b1220;color:#fff;font-family:sans-serif;padding:40px;"><h1>Enroll this laptop</h1><pre>${cmd}</pre></body>`);
 });
 
-app.post("/api/enroll/:session_id/claim", (req, res) => {
+app.post("/api/enroll/:session_id/claim", async (req, res) => {
   const { token, fingerprint } = req.body;
-  const s = sqlite.prepare(`SELECT * FROM enroll_sessions WHERE session_id = ?`).get(req.params.session_id);
+  const sRes = await sqlite.execute({ sql: "SELECT * FROM enroll_sessions WHERE session_id = ?", args: [req.params.session_id] });
+  const s = sRes.rows[0];
+  
   if (!s || s.claimed_at) return res.status(409).json({ error: "invalid session" });
 
-  const claim = sqlite.transaction(() => {
-    sqlite.prepare(`UPDATE enroll_sessions SET claimed_at = ? WHERE session_id = ?`).run(nowIso(), req.params.session_id);
-    sqlite.prepare(`UPDATE assets SET status = 'enrolled', token_hash = ?, hostname = ?, mac = ?, os = ?, enrolled_at = ? WHERE asset_id = ?`)
-      .run(sha256(token), fingerprint.hostname, fingerprint.mac, fingerprint.os, nowIso(), s.asset_id);
-  });
-  claim();
+  await sqlite.batch([
+    { sql: "UPDATE enroll_sessions SET claimed_at = ? WHERE session_id = ?", args: [nowIso(), req.params.session_id] },
+    {
+      sql: "UPDATE assets SET status = 'enrolled', token_hash = ?, hostname = ?, mac = ?, os = ?, enrolled_at = ? WHERE asset_id = ?",
+      args: [sha256(token), fingerprint.hostname, fingerprint.mac, fingerprint.os, nowIso(), s.asset_id]
+    }
+  ]);
+  
   res.json({ ok: true, asset_id: s.asset_id });
 });
 
-app.post("/api/heartbeat", requireAssetToken, (req, res) => {
+app.post("/api/heartbeat", requireAssetToken, async (req, res) => {
   const b = req.body;
-  sqlite.prepare(`UPDATE assets SET status = 'online', last_seen = ?, cpu = ?, mem = ?, disk = ?, uptime = ? WHERE asset_id = ?`)
-    .run(nowIso(), b.cpu, b.mem, b.disk, b.uptime, req.asset.asset_id);
+  await sqlite.execute({
+    sql: "UPDATE assets SET status = 'online', last_seen = ?, cpu = ?, mem = ?, disk = ?, uptime = ? WHERE asset_id = ?",
+    args: [nowIso(), b.cpu, b.mem, b.disk, b.uptime, req.asset.asset_id]
+  });
+
   if (b.cpu > 80 || b.mem > 80) {
-    sqlite.prepare(`INSERT INTO asset_events (asset_id, ts, type, severity, detail) VALUES (?, ?, 'high_usage', 'medium', ?)`)
-      .run(req.asset.asset_id, nowIso(), `CPU: ${b.cpu}%, RAM: ${b.mem}%`);
+    await sqlite.execute({
+      sql: "INSERT INTO asset_events (asset_id, ts, type, severity, detail) VALUES (?, ?, 'high_usage', 'medium', ?)",
+      args: [req.asset.asset_id, nowIso(), `CPU: ${b.cpu}%, RAM: ${b.mem}%`]
+    });
   }
   res.json({ ok: true });
 });
@@ -346,36 +389,44 @@ app.post("/api/heartbeat", requireAssetToken, (req, res) => {
 // ============================================================
 // DASHBOARD DATA
 // ============================================================
-app.get("/api/dashboard/assets", requireUser, (req, res) => {
-  const user = sqlite.prepare(`SELECT project_id FROM users WHERE id = ?`).get(req.userId);
+app.get("/api/dashboard/assets", requireUser, async (req, res) => {
+  const userRes = await sqlite.execute({ sql: "SELECT project_id FROM users WHERE id = ?", args: [req.userId] });
+  const user = userRes.rows[0];
+  
   let rows;
   if (user.project_id) {
-    rows = sqlite.prepare(`SELECT * FROM assets WHERE project_id = ? ORDER BY created_at DESC`).all(user.project_id);
+    const assetRes = await sqlite.execute({ sql: "SELECT * FROM assets WHERE project_id = ? ORDER BY created_at DESC", args: [user.project_id] });
+    rows = assetRes.rows;
   } else {
-    rows = sqlite.prepare(`SELECT * FROM assets WHERE user_id = ? ORDER BY created_at DESC`).all(req.userId);
+    const assetRes = await sqlite.execute({ sql: "SELECT * FROM assets WHERE user_id = ? ORDER BY created_at DESC", args: [req.userId] });
+    rows = assetRes.rows;
   }
+  
   const now = Date.now();
   res.json(rows.map(r => ({ ...r, online: r.last_seen && (now - new Date(r.last_seen).getTime()) < 90000 })));
 });
 
-app.delete("/api/assets/:id", requireUser, (req, res) => {
-  sqlite.prepare(`DELETE FROM assets WHERE asset_id = ? AND user_id = ?`).run(req.params.id, req.userId);
+app.delete("/api/assets/:id", requireUser, async (req, res) => {
+  await sqlite.execute({ sql: "DELETE FROM assets WHERE asset_id = ? AND user_id = ?", args: [req.params.id, req.userId] });
   res.json({ ok: true });
 });
 
-app.get("/api/dashboard/events", requireUser, (req, res) => {
-  const rows = sqlite.prepare(`
-    SELECT e.*, a.name as asset_name FROM asset_events e
-    JOIN assets a ON e.asset_id = a.asset_id
-    WHERE a.user_id = ?
-    ORDER BY e.id DESC LIMIT 10
-  `).all(req.userId);
-  res.json(rows);
+app.get("/api/dashboard/events", requireUser, async (req, res) => {
+  const rowsRes = await sqlite.execute({
+    sql: `SELECT e.*, a.name as asset_name FROM asset_events e
+          JOIN assets a ON e.asset_id = a.asset_id
+          WHERE a.user_id = ?
+          ORDER BY e.id DESC LIMIT 10`,
+    args: [req.userId]
+  });
+  res.json(rowsRes.rows);
 });
 
-app.post("/api/dashboard/cleanup", requireUser, (req, res) => {
-  sqlite.prepare(`DELETE FROM assets WHERE user_id = ?`).run(req.userId);
-  sqlite.prepare(`DELETE FROM projects WHERE user_id = ?`).run(req.userId);
+app.post("/api/dashboard/cleanup", requireUser, async (req, res) => {
+  await sqlite.batch([
+    { sql: "DELETE FROM assets WHERE user_id = ?", args: [req.userId] },
+    { sql: "DELETE FROM projects WHERE user_id = ?", args: [req.userId] }
+  ]);
   res.json({ ok: true });
 });
 
