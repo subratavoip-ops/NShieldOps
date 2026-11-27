@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>NShieldOps</title>
+
+  <style>
+    :root { color-scheme: dark; --bg: #0b1220; --panel: #111b2d; --line: rgba(148, 163, 184, .17); --text: #e5eefb; --muted: #94a3b8; --blue: #60a5fa; --green: #34d399; --amber: #fbbf24; --red: #f87171; --shadow: 0 16px 38px rgba(2, 6, 23, .28); }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif; background: #0b1220; color: var(--text); }
+    body { min-height: 100vh; position: relative; isolation: isolate; display: flex; flex-direction: column; }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .hidden { display: none !important; }
+    .page { width: 100%; max-width: 1160px; margin: 0 auto; padding: 0 16px; }
+
+    .ambient-art { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: .13; overflow: hidden; background: radial-gradient(circle at 12% 0, rgba(42, 87, 143, .25), transparent 40%), #0b1220; }
+    .ambient-art svg { width: 100%; height: 100%; display: block; }
+
+    .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--line); position: relative; z-index: 10; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 750; }
+    .brand-mark { width: 42px; height: 42px; flex: 0 0 42px; }
+    .brand-mark svg { width: 100%; height: 100%; display: block; }
+    .brand-title { font-weight: 800; letter-spacing: -.02em; }
+    .brand-sub { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    #userActions { display: flex; align-items: center; gap: 12px; }
+
+    main { padding: 34px 0 64px; position: relative; z-index: 1; flex: 1; }
+    h1 { margin: 0 0 8px; font-size: clamp(1.7rem, 3vw, 2.3rem); }
+    h2 { margin: 0 0 10px; }
+    h3 { margin: 0 0 8px; }
+    .muted, .subtitle { color: var(--muted); }
+    .subtitle { margin: 0 0 24px; line-height: 1.55; }
+
+    .panel, .project-card, .asset-card { background: rgba(17, 27, 45, .94); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); }
+    .auth-wrap { width: min(440px, 100%); margin: 5vh auto; }
+    .auth-wrap .panel { padding: 28px; }
+
+    .field { margin: 17px 0; }
+    label { display: block; margin-bottom: 7px; font-weight: 650; }
+    input, select, textarea { width: 100%; padding: 12px 13px; color: var(--text); background: #0b1220; border: 1px solid var(--line); border-radius: 10px; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid rgba(96, 165, 250, .55); outline-offset: 1px; }
+
+    .btn { padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--text); background: #17243a; transition: filter .2s ease; }
+    .btn:hover { filter: brightness(1.08); }
+    .btn.primary { color: white; border: 0; background: #3269b8; }
+    .btn.full { width: 100%; padding: 13px; font-weight: 700; }
+    .btn.danger { color: #fecaca; background: rgba(127, 29, 29, .35); border-color: rgba(248, 113, 113, .35); }
+    .btn.danger:hover { background: rgba(127, 29, 29, .6); }
+    
+    .text-btn { border: 0; background: none; color: var(--blue); padding: 0; font-weight: 700; font-size: 13px; }
+    .form-error { min-height: 22px; color: var(--red); font-size: 13px; }
+    .form-success { min-height: 22px; color: var(--green); font-size: 13px; }
+
+    .projects-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .project-card { padding: 20px; }
+    .project-card h2 { font-size: 1.15rem; margin-bottom: 6px; }
+    .project-card p { color: var(--muted); margin: 6px 0 18px; }
+    .project-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+    
+    .badge { display: inline-block; padding: 4px 9px; border-radius: 999px; color: var(--green); background: rgba(52, 211, 153, .12); font-size: 12px; font-weight: 700; }
+    .empty { padding: 28px; text-align: center; border: 1px dashed var(--line); border-radius: 16px; color: var(--muted); margin-top: 16px; }
+    .back-link { margin-bottom: 18px; }
+    .permissions-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0 18px; }
+
+    .dashboard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+    .stats { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 14px; margin: 22px 0; }
+    .stat { padding: 18px; }
+    .stat-label { color: var(--muted); font-size: 13px; }
+    .stat-value { display: block; margin-top: 8px; font-size: 1.8rem; font-weight: 800; }
+
+    .dashboard-columns { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .dashboard-columns > .panel { padding: 20px; }
+
+    .alert { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+    .alert:last-child { border-bottom: 0; }
+    .severity { font-size: 12px; font-weight: 750; }
+    .severity.high { color: var(--red); }
+    .severity.medium { color: var(--amber); }
+    .severity.low { color: var(--green); }
+
+    .asset-list { display: grid; gap: 12px; margin-top: 12px; }
+    .asset-card { padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; box-shadow: none; }
+    .device-pill { padding: 5px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; color: var(--blue); background: rgba(96, 165, 250, .12); border: 1px solid rgba(96, 165, 250, .25); white-space: nowrap; }
+    .device-pill.pending { color: var(--amber); background: rgba(251, 191, 36, .12); border-color: rgba(251, 191, 36, .2); }
+    .device-pill.online { color: var(--green); background: rgba(52, 211, 153, .12); border-color: rgba(52, 211, 153, .2); }
+
+    .modal { position: fixed; inset: 0; z-index: 100; background: rgba(2, 6, 23, .76); display: grid; place-items: center; padding: 20px; }
+    .modal-panel { width: min(760px, 100%); max-height: min(90vh, 900px); overflow-y: auto; background: #111b2d; border: 1px solid var(--line); border-radius: 24px; box-shadow: var(--shadow); padding: 24px 20px 20px; }
+    .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+    .modal-head h2 { margin: 0; font-size: 1.8rem; }
+    .close-btn { border: 0; background: transparent; color: var(--muted); font-size: 2rem; line-height: 1; padding: 0 6px; }
+    .prototype-note { color: var(--muted); font-size: .85rem; line-height: 1.5; padding: 12px; border: 1px solid var(--line); border-radius: 12px; margin: 16px 0; }
+
+    @media (max-width: 1024px) { .dashboard-columns { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 760px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .dashboard-columns { grid-template-columns: 1fr; }
+      .topbar { flex-direction: column; align-items: flex-start; }
+      #userActions { width: 100%; justify-content: space-between; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ambient-art" aria-hidden="true">
+    <svg viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <linearGradient id="spiderMetal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dce8f5" /><stop offset=".32" stop-color="#859bb5" /><stop offset=".68" stop-color="#425a76" /><stop offset="1" stop-color="#c5d3e2" /></linearGradient>
+        <linearGradient id="webSilk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a9c9ed" /><stop offset=".5" stop-color="#607f9f" /><stop offset="1" stop-color="#38536f" /></linearGradient>
+      </defs>
+      <g fill="none" stroke="url(#webSilk)" stroke-width="1.15" opacity=".8">
+        <path d="M1440 0 L970 0" /><path d="M1440 0 L1015 95" /><path d="M1440 0 L1090 205" /><path d="M1440 0 L1190 330" /><path d="M1440 0 L1320 490" /><path d="M1440 0 L1440 610" />
+        <path d="M1440 0 L1055 45" /><path d="M1440 0 L1065 145" /><path d="M1440 0 L1140 270" /><path d="M1440 0 L1255 410" /><path d="M1440 0 L1380 540" />
+      </g>
+      <g transform="translate(1135 260)" fill="none" stroke="url(#spiderMetal)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M-13 -10 L-35 -31 L-59 -39 L-82 -61" /><path d="M-20 -5 L-49 -12 L-74 -9 L-101 -23" />
+        <path d="M-20 6 L-49 14 L-73 30 L-99 51" /><path d="M-13 12 L-34 34 L-51 56 L-73 78" />
+        <path d="M13 -10 L35 -31 L59 -39 L82 -61" /><path d="M20 -5 L49 -12 L74 -9 L101 -23" />
+        <path d="M20 6 L49 14 L73 30 L99 51" /><path d="M13 12 L34 34 L51 56 L73 78" />
+      </g>
+    </svg>
+  </div>
+
+  <header class="page topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-label="NShieldOps logo">
+        <svg viewBox="0 0 240 240" role="img" aria-hidden="true">
+          <defs><linearGradient id="shieldFill" x1="0%" x2="100%" y1="0%" y2="100%"><stop offset="0%" stop-color="#e6eefb" /><stop offset="25%" stop-color="#dfe7f8" /><stop offset="100%" stop-color="#8da3d6" /></linearGradient></defs>
+          <path d="M120 20 L194 42 L194 115 C194 165 162 205 120 222 C78 205 46 165 46 115 L46 42 Z" fill="url(#shieldFill)" stroke="rgba(255,255,255,.75)" stroke-width="5" />
+          <text x="120" y="154" text-anchor="middle" font-size="108" font-weight="800" font-family="Segoe UI, Arial, sans-serif" fill="#f5f9ff" letter-spacing="-8">N</text>
+          <path d="M30 158 C65 120 108 122 138 152 C168 182 211 182 225 146" fill="none" stroke="#4aa8ff" stroke-width="16" stroke-linecap="round" />
+        </svg>
+      </div>
+      <div>
+        <div class="brand-title">NShieldOps</div>
+        <div class="brand-sub">Security Operations</div>
+      </div>
+    </div>
+    <div id="userActions" class="hidden">
+      <span id="userLabel" class="muted"></span>
+      <button id="logoutBtn" class="btn" type="button">Log out</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <section id="authView" class="auth-wrap hidden">
+      <div class="panel">
+        <div id="loginSection">
+          <h1 id="authTitle">Welcome back</h1>
+          <p id="authSubtitle" class="subtitle">Sign in to manage your projects.</p>
+          <form id="authForm">
+            <input type="hidden" id="authProjectId" />
+            <div id="nameField" class="field hidden">
+              <label for="name">Your name</label>
+              <input id="name" autocomplete="name" />
+            </div>
+            <div class="field">
+              <label for="email">Work email</label>
+              <input id="email" type="email" autocomplete="email" required />
+            </div>
+            <div class="field">
+              <label for="password">Password</label>
+              <input id="password" type="password" minlength="12" maxlength="128" autocomplete="current-password" required />
+            </div>
+            <p id="authError" class="form-error" role="alert"></p>
+            <button id="authSubmit" class="btn primary full" type="submit">Sign in</button>
+          </form>
+          <div class="muted" style="margin-top:20px; display:flex; justify-content:space-between; align-items:center;">
+            <div><span id="authSwitchText">New here?</span> <button id="authSwitch" class="text-btn" type="button">Create an account</button></div>
+            <button id="forgotBtn" class="text-btn" type="button">Forgot password?</button>
+          </div>
+        </div>
+
+        <div id="forgotSection" class="hidden">
+          <h1>Reset password</h1>
+          <p class="subtitle">Enter your email and we'll send you a link to reset your password.</p>
+          <form id="forgotForm">
+            <div class="field">
+              <label for="forgotEmail">Work email</label>
+              <input id="forgotEmail" type="email" required />
+            </div>
+            <p id="forgotError" class="form-error" role="alert"></p>
+            <p id="forgotSuccess" class="form-success" style="display:none;"></p>
+            <button id="forgotSubmit" class="btn primary full" type="submit">Send Reset Link</button>
+          </form>
+          <p class="muted" style="margin-top:20px;">
+            Remembered it? <button id="backToLoginBtn" class="text-btn" type="button">Back to sign in</button>
+          </p>
+        </div>
+
+        <div id="resetSection" class="hidden">
+          <h1>Create new password</h1>
+          <p class="subtitle">Enter a strong new password for your account.</p>
+          <form id="resetForm">
+            <div class="field">
+              <label for="newPassword">New Password</label>
+              <input id="newPassword" type="password" minlength="12" maxlength="128" required />
+            </div>
+            <p id="resetError" class="form-error" role="alert"></p>
+            <p id="resetSuccess" class="form-success" style="display:none;"></p>
+            <button id="resetSubmit" class="btn primary full" type="submit">Reset Password</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section id="projectsView" class="hidden">
+      <div class="permissions-row">
+        <div>
+          <h1>Your projects</h1>
+          <p id="userRoleText" class="subtitle">Projects assigned to you</p>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button id="cleanupBtn" class="btn danger" type="button">Wipe All Data</button>
+          <button id="newProjectBtn" class="btn primary" type="button">＋ Create project</button>
+        </div>
+      </div>
+      <div id="projectsGrid" class="projects-grid"></div>
+      <div id="emptyProjects" class="empty hidden"><h2>No projects assigned</h2></div>
+    </section>
+
+    <section id="createView" class="auth-wrap hidden">
+      <button class="text-btn back-link" type="button" data-go-projects>← Back to projects</button>
+      <div class="panel">
+        <h1>Create a project</h1>
+        <p class="subtitle">Create a project to organize your assets.</p>
+        <form id="projectForm">
+          <div class="field">
+            <label for="projectName">Project name</label>
+            <input id="projectName" placeholder="e.g. Business Unit" required maxlength="80" />
+          </div>
+          <div class="field">
+            <label for="projectType">Project type</label>
+            <select id="projectType">
+              <option value="Security operations">Security operations</option>
+              <option value="Household">Household</option>
+              <option value="Business">Business</option>
+            </select>
+          </div>
+          <p id="projectError" class="form-error" role="alert"></p>
+          <button class="btn primary full" type="submit">Create project</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="dashboardView" class="hidden">
+      <button class="text-btn back-link" type="button" data-go-projects>← All projects</button>
+      <div class="dashboard-head">
+        <div>
+          <h1 id="dashboardProjectName">Project dashboard</h1>
+          <p id="dashboardProjectMeta" class="subtitle">Security operations · Active</p>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button id="addAssetBtn" class="btn primary" type="button">＋ Add asset</button>
+          <span class="badge">Monitoring active</span>
+        </div>
+      </div>
+
+      <div class="stats">
+        <article class="panel stat">
+          <span class="stat-label">Open incidents</span>
+          <strong id="statIncidents" class="stat-value">0</strong>
+        </article>
+        <article class="panel stat">
+          <span class="stat-label">High-priority alerts</span>
+          <strong id="statAlerts" class="stat-value">0</strong>
+        </article>
+        <article class="panel stat">
+          <span class="stat-label">Registered assets</span>
+          <strong id="assetCountValue" class="stat-value">0</strong>
+        </article>
+        <article class="panel stat">
+          <span class="stat-label">Security health</span>
+          <strong id="statHealth" class="stat-value">100%</strong>
+        </article>
+      </div>
+
+      <div class="dashboard-columns">
+        <section class="panel">
+          <h2>Priority alerts</h2>
+          <div id="alertsList"><div class="muted">Loading alerts...</div></div>
+        </section>
+        
+        <section class="panel">
+          <h2>Assets in project</h2>
+          <div id="assetsList" class="asset-list"></div>
+        </section>
+
+        <section class="panel">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h2 style="margin:0;">Project Members</h2>
+            <button id="addUserBtn" class="btn primary" style="padding:6px 10px; font-size:12px;">+ Add User</button>
+          </div>
+          <div id="projectUsersList" class="asset-list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="assetModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h2>Add asset</h2>
+        <button id="closeAssetModal" class="close-btn" type="button">×</button>
+      </div>
+      <div class="asset-option" style="margin-bottom:14px;">
+        <div class="asset-option-copy">
+          <div class="asset-option-title">Enroll current laptop</div>
+          <div class="asset-option-subtitle">Generate a link to connect your Python agent.</div>
+        </div>
+        <button id="enrollLaptopBtn" class="btn primary asset-btn" type="button">Continue</button>
+      </div>
+      <div id="assetFormContainer" class="hidden" style="margin-top:18px;"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = "";
+    const $ = id => document.getElementById(id);
+    const views = ["authView", "projectsView", "createView", "dashboardView"];
+
+    let currentUser = null;
+    let currentProjectId = "";
+    let isSignupMode = false;
+
+    function showView(viewId) {
+      views.forEach(id => $(id).classList.toggle("hidden", id !== viewId));
+      if (viewId !== "dashboardView" && window.dashboardTimer) clearInterval(window.dashboardTimer);
+    }
+
+    async function api(path, options = {}) {
+      const res = await fetch(`${API_BASE}${path}`, {
+        headers: { "Content-Type": "application/json", ...options.headers },
+        ...options
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Request failed");
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    function showAuthSection(sectionId) {
+      ["loginSection", "forgotSection", "resetSection"].forEach(id => {
+        $(id).classList.toggle("hidden", id !== sectionId);
+      });
+    }
+
+    $("forgotBtn").addEventListener("click", () => {
+      showAuthSection("forgotSection");
+      $("forgotError").textContent = "";
+      $("forgotSuccess").style.display = "none";
+      $("forgotForm").reset();
+    });
+
+    $("backToLoginBtn").addEventListener("click", () => {
+      showAuthSection("loginSection");
+    });
+
+    function updateUserStatus() {
+      if (!currentUser) return $("userActions").classList.add("hidden");
+      $("userLabel").textContent = `${currentUser.name} (${currentUser.email})`;
+      $("userActions").classList.remove("hidden");
+    }
+
+    $("authSwitch").addEventListener("click", () => {
+      $("authProjectId").value = "";
+      isSignupMode = !isSignupMode;
+      $("authTitle").textContent = isSignupMode ? "Create an account" : "Welcome back";
+      $("nameField").classList.toggle("hidden", !isSignupMode);
+      $("authSubmit").textContent = isSignupMode ? "Create account" : "Sign in";
+      $("authSwitchText").textContent = isSignupMode ? "Already have an account?" : "New here?";
+      $("authSwitch").textContent = isSignupMode ? "Sign in" : "Create an account";
+    });
+
+    $("authForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      $("authError").textContent = "";
+      try {
+        const payload = { 
+          email: $("email").value.trim(), 
+          password: $("password").value,
+          project_id: $("authProjectId").value
+        };
+        if (isSignupMode) payload.name = $("name").value.trim();
+        
+        const endpoint = isSignupMode ? "/api/auth/signup" : "/api/auth/login";
+        const data = await api(endpoint, { method: "POST", body: JSON.stringify(payload) });
+        
+        currentUser = data.user;
+        $("authForm").reset();
+        updateUserStatus();
+        renderProjects();
+        showView("projectsView");
+      } catch (err) {
+        $("authError").textContent = err.message;
+      }
+    });
+
+    $("logoutBtn").addEventListener("click", async () => {
+      await api("/api/auth/logout", { method: "POST" });
+      window.location.reload();
+    });
+
+    $("forgotForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      $("forgotError").textContent = "";
+      $("forgotSuccess").style.display = "none";
+      const btn = $("forgotSubmit");
+      btn.disabled = true; btn.textContent = "Sending...";
+      
+      try {
+        const data = await api("/api/auth/forgot-password", {
+          method: "POST",
+          body: JSON.stringify({ email: $("forgotEmail").value.trim() })
+        });
+        $("forgotSuccess").textContent = data.message;
+        $("forgotSuccess").style.display = "block";
+        $("forgotForm").reset();
+      } catch (err) {
+        $("forgotError").textContent = err.message;
+      } finally {
+        btn.disabled = false; btn.textContent = "Send Reset Link";
+      }
+    });
+
+    $("resetForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      $("resetError").textContent = "";
+      $("resetSuccess").style.display = "none";
+      const btn = $("resetSubmit");
+      btn.disabled = true; btn.textContent = "Resetting...";
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get("token");
+
+      try {
+        const data = await api("/api/auth/reset-password", {
+          method: "POST",
+          body: JSON.stringify({ token, password: $("newPassword").value })
+        });
+        $("resetSuccess").textContent = data.message + " Redirecting to login...";
+        $("resetSuccess").style.display = "block";
+        $("resetForm").reset();
+        
+        setTimeout(() => {
+          window.history.replaceState({}, document.title, "/");
+          showAuthSection("loginSection");
+          showView("authView");
+        }, 2500);
+      } catch (err) {
+        $("resetError").textContent = err.message;
+      } finally {
+        btn.disabled = false; btn.textContent = "Reset Password";
+      }
+    });
+
+    async function renderProjects() {
+      const grid = $("projectsGrid");
+      try {
+        const projects = await api("/api/projects");
+        $("emptyProjects").classList.toggle("hidden", projects.length > 0);
+        
+        grid.innerHTML = projects.map(p => `
+          <article class="project-card">
+            <h2>${p.name}</h2>
+            <p>${p.type || "Security operations"}</p>
+            <div class="project-meta">
+              <span class="badge">Active</span>
+              <button class="btn" onclick="openDashboard('${p.id}', '${p.name}')">Open</button>
+            </div>
+          </article>
+        `).join("");
+      } catch (err) {
+        grid.innerHTML = `<div class="form-error">${err.message}</div>`;
+      }
+    }
+
+    $("newProjectBtn").addEventListener("click", () => showView("createView"));
+    document.querySelectorAll("[data-go-projects]").forEach(btn => {
+      btn.addEventListener("click", () => { showView("projectsView"); renderProjects(); });
+    });
+
+    $("projectForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      try {
+        await api("/api/projects", {
+          method: "POST",
+          body: JSON.stringify({
+            name: $("projectName").value.trim(),
+            type: $("projectType").value
+          })
+        });
+        $("projectForm").reset();
+        renderProjects();
+        showView("projectsView");
+      } catch (err) {
+        $("projectError").textContent = err.message;
+      }
+    });
+
+    function openDashboard(id, name) {
+      currentProjectId = id;
+      $("dashboardProjectName").textContent = name;
+      showView("dashboardView");
+      loadDashboardData(); 
+      if (window.dashboardTimer) clearInterval(window.dashboardTimer);
+      window.dashboardTimer = setInterval(loadDashboardData, 5000);
+    }
+
+    async function loadDashboardData() {
+      try {
+        const assets = await api("/api/dashboard/assets");
+        $("assetCountValue").textContent = assets.length;
+        let onlineCount = 0;
+
+        $("assetsList").innerHTML = assets.map(a => {
+          if (a.online) onlineCount++;
+          const metrics = a.online ? `CPU: ${a.cpu || 0}% · RAM: ${a.mem || 0}%` : `Awaiting heartbeat...`;
+          return `
+            <div class="asset-card">
+              <div>
+                <strong>${a.name}</strong>
+                <div class="muted" style="font-size:12px">${a.os || 'Unknown'} · ${metrics}</div>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <span class="device-pill ${a.online ? 'online' : 'pending'}">${a.online ? 'Online' : 'Offline'}</span>
+                <button class="btn danger" onclick="deleteAsset('${a.asset_id}')">Remove</button>
+              </div>
+            </div>
+          `;
+        }).join("") || "<div class='muted'>No assets yet.</div>";
+
+        $("statHealth").textContent = `${assets.length === 0 ? 100 : Math.round((onlineCount / assets.length) * 100)}%`;
+
+        const events = await api("/api/dashboard/events");
+        $("alertsList").innerHTML = events.map(e => `
+          <div class="alert">
+            <div>
+              <strong>${e.type.replace(/_/g, ' ').toUpperCase()}</strong>
+              <div class="muted">${e.asset_name} · ${new Date(e.ts).toLocaleTimeString()}</div>
+            </div>
+            <span class="severity ${e.severity}">${e.severity.toUpperCase()}</span>
+          </div>
+        `).join("") || "<div class='muted'>System is healthy.</div>";
+
+        $("statAlerts").textContent = events.filter(e => e.severity === "high").length;
+        $("statIncidents").textContent = events.length;
+
+        const users = await api("/api/users");
+        const projectUsers = users.filter(u => u.project_id === currentProjectId);
+        $("projectUsersList").innerHTML = projectUsers.map(u => `
+          <div class="asset-card">
+            <div>
+              <strong>${u.name}</strong>
+              <div class="muted" style="font-size:12px">${u.email}</div>
+            </div>
+            <button class="btn danger" onclick="deleteUser('${u.id}')">Remove</button>
+          </div>
+        `).join("") || "<div class='muted'>No users assigned.</div>";
+
+      } catch (err) { console.error(err); }
+    }
+
+    async function deleteAsset(id) {
+      if (!confirm("Remove this asset?")) return;
+      try { await api(`/api/assets/${id}`, { method: "DELETE" }); loadDashboardData(); } catch (err) { alert(err.message); }
+    }
+
+    async function deleteUser(id) {
+      if (!confirm("Remove this user from the project?")) return;
+      try { await api(`/api/users/${id}`, { method: "DELETE" }); loadDashboardData(); } catch (err) { alert(err.message); }
+    }
+
+    $("addUserBtn").addEventListener("click", () => {
+      $("authProjectId").value = currentProjectId;
+      isSignupMode = true;
+      $("authTitle").textContent = "Add User to Project";
+      $("authSubtitle").textContent = "This user will be automatically aligned to the current project.";
+      $("nameField").classList.remove("hidden");
+      $("authSubmit").textContent = "Create User";
+      $("authSwitchText").textContent = "Cancel adding user?";
+      $("authSwitch").textContent = "Go back";
+      showAuthSection("loginSection");
+      showView("authView");
+    });
+
+    $("cleanupBtn").addEventListener("click", async () => {
+      if (!confirm("WARNING: This will delete ALL your projects, assets, and created users. Proceed?")) return;
+      if (!confirm("Are you absolutely sure?")) return;
+      try { await api("/api/dashboard/cleanup", { method: "POST" }); renderProjects(); } catch (err) { alert(err.message); }
+    });
+
+    $("addAssetBtn").addEventListener("click", () => $("assetModal").classList.remove("hidden"));
+    $("closeAssetModal").addEventListener("click", () => $("assetModal").classList.add("hidden"));
+
+    $("enrollLaptopBtn").addEventListener("click", () => {
+      $("assetFormContainer").classList.remove("hidden");
+      $("assetFormContainer").innerHTML = `
+        <h3>Register Laptop</h3>
+        <div class="field"><label>Laptop name</label><input id="laptopName" value="My Laptop" /></div>
+        <button id="genEnrollLink" class="btn primary full" type="button">Generate Link</button>
+        <div id="enrollResult" style="margin-top:16px;"></div>
+      `;
+
+      $("genEnrollLink").addEventListener("click", async () => {
+        const btn = $("genEnrollLink");
+        btn.disabled = true; btn.textContent = "Generating...";
+        try {
+          const data = await api("/api/enroll/sessions", {
+            method: "POST",
+            body: JSON.stringify({ name: $("laptopName").value.trim() || "My Laptop", project_id: currentProjectId })
+          });
+          $("enrollResult").innerHTML = `
+            <div class="field"><label>Enrollment command</label><input readonly value="${data.command}" onclick="this.select()" /></div>
+            <div id="enrollWait" class="muted">⏳ Waiting for connection...</div>
+          `;
+          pollUntilEnrolled(data.asset_id);
+        } catch (error) {
+          $("enrollResult").innerHTML = `<p class="form-error">${error.message}</p>`;
+        } finally {
+          btn.disabled = false; btn.textContent = "Generate Link";
+        }
+      });
+    });
+
+    async function pollUntilEnrolled(assetId) {
+      const start = Date.now();
+      while (Date.now() - start < 600000) {
+        try {
+          const assets = await api("/api/dashboard/assets");
+          if (assets.find(a => a.asset_id === assetId)?.online) {
+            $("enrollWait").innerHTML = `✅ <b>Agent connected!</b>`;
+            $("enrollWait").style.color = "#34d399";
+            setTimeout(() => { $("assetModal").classList.add("hidden"); loadDashboardData(); }, 1500);
+            return;
+          }
+        } catch {}
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+
+    // --- Boot sequence ---
+    async function boot() {
+      const urlToken = new URLSearchParams(window.location.search).get("token");
+      
+      if (urlToken) {
+        showAuthSection("resetSection");
+        showView("authView");
+        return;
+      }
+
+      try {
+        const data = await api("/api/auth/me");
+        currentUser = data.user;
+        updateUserStatus();
+        renderProjects();
+        showView("projectsView");
+      } catch (err) {
+        currentUser = null;
+        showAuthSection("loginSection");
+        showView("authView");
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>

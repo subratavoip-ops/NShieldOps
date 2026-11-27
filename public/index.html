@@ -139,6 +139,7 @@
       </div>
     </div>
     <div id="userActions" class="hidden">
+      <button id="contactBtn" class="btn" type="button">Contact</button>
       <span id="userLabel" class="muted"></span>
       <button id="logoutBtn" class="btn" type="button">Log out</button>
     </div>
@@ -245,6 +246,26 @@
       </div>
     </section>
 
+    <section id="contactView" class="auth-wrap hidden">
+      <button class="text-btn back-link" type="button" id="backFromContact">← Back to Dashboard</button>
+      <div class="panel">
+        <h1>Contact Project Manager</h1>
+        <p class="subtitle">You do not have permission to delete this asset or project. Please send an email to the manager with your credentials to request deletion.</p>
+        
+        <div class="field">
+          <label>Manager Email</label>
+          <input readonly value="admin@nshieldops.com" onclick="this.select()" />
+        </div>
+        
+        <div class="field">
+          <label>Your Request Message</label>
+          <textarea id="contactMsg" rows="5" readonly></textarea>
+        </div>
+        
+        <a href="mailto:admin@nshieldops.com?subject=Deletion Request&body=Please delete my assigned assets." class="btn primary full" style="text-align: center; text-decoration: none; display: block;">Send Email Request</a>
+      </div>
+    </section>
+
     <section id="dashboardView" class="hidden">
       <button class="text-btn back-link" type="button" data-go-projects>← All projects</button>
       <div class="dashboard-head">
@@ -319,11 +340,12 @@
   <script>
     const API_BASE = "";
     const $ = id => document.getElementById(id);
-    const views = ["authView", "projectsView", "createView", "dashboardView"];
+    const views = ["authView", "projectsView", "createView", "dashboardView", "contactView"];
 
     let currentUser = null;
     let currentProjectId = "";
     let isSignupMode = false;
+    let isProjectAdmin = false; // NEW: Tracks if the current user is the creator
 
     function showView(viewId) {
       views.forEach(id => $(id).classList.toggle("hidden", id !== viewId));
@@ -390,6 +412,7 @@
         const data = await api(endpoint, { method: "POST", body: JSON.stringify(payload) });
         
         currentUser = data.user;
+        isProjectAdmin = !currentUser.project_id;
         $("authForm").reset();
         updateUserStatus();
         renderProjects();
@@ -565,14 +588,39 @@
     }
 
     async function deleteAsset(id) {
-      if (!confirm("Remove this asset?")) return;
+      if (!isProjectAdmin) {
+        if (confirm("You do not have permission to delete this asset. Contact Project Manager?")) {
+          $("contactMsg").value = `Hi, I am requesting the deletion of my assigned assets.\n\nName: ${currentUser.name}\nEmail: ${currentUser.email}`;
+          showView("contactView");
+        }
+        return;
+      }
+
+      if (!confirm("Are you sure? This will delete the asset and immediately disconnect the agent.")) return;
       try { await api(`/api/assets/${id}`, { method: "DELETE" }); loadDashboardData(); } catch (err) { alert(err.message); }
     }
 
     async function deleteUser(id) {
+      if (!isProjectAdmin) {
+        if (confirm("You do not have permission to remove users. Contact Project Manager?")) {
+          $("contactMsg").value = `Hi, I am requesting the removal of users from my project.\n\nName: ${currentUser.name}\nEmail: ${currentUser.email}`;
+          showView("contactView");
+        }
+        return;
+      }
+
       if (!confirm("Remove this user from the project?")) return;
       try { await api(`/api/users/${id}`, { method: "DELETE" }); loadDashboardData(); } catch (err) { alert(err.message); }
     }
+
+    $("contactBtn").addEventListener("click", () => {
+      $("contactMsg").value = `Hi, I am requesting the deletion of my assigned assets/project.\n\nName: ${currentUser.name}\nEmail: ${currentUser.email}`;
+      showView("contactView");
+    });
+
+    $("backFromContact").addEventListener("click", () => {
+      showView("dashboardView");
+    });
 
     $("addUserBtn").addEventListener("click", () => {
       $("authProjectId").value = currentProjectId;
@@ -642,7 +690,6 @@
       }
     }
 
-    // --- Boot sequence ---
     async function boot() {
       const urlToken = new URLSearchParams(window.location.search).get("token");
       
@@ -655,6 +702,8 @@
       try {
         const data = await api("/api/auth/me");
         currentUser = data.user;
+        isProjectAdmin = !currentUser.project_id; 
+        
         updateUserStatus();
         renderProjects();
         showView("projectsView");
