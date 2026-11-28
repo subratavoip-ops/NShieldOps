@@ -31,7 +31,33 @@ async function initDb() {
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, type TEXT, created_at TEXT NOT NULL);`);
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, project_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS password_reset_tokens (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE, expires_at INTEGER NOT NULL, used_at INTEGER, created_at INTEGER NOT NULL);`);
-  await sqlite.execute(`CREATE TABLE IF NOT EXISTS assets (asset_id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT, os TEXT, owner TEXT, project_id TEXT, user_id TEXT, hostname TEXT, mac TEXT, cpu REAL, mem REAL, disk REAL, uptime INTEGER, status TEXT NOT NULL DEFAULT 'pending', token_hash TEXT, created_at TEXT NOT NULL, enrolled_at TEXT, last_seen TEXT);`);
+  
+  // UPDATED: Added latitude and longitude
+  await sqlite.execute(`
+    CREATE TABLE IF NOT EXISTS assets (
+      asset_id    TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      type        TEXT,
+      os          TEXT,
+      owner       TEXT,
+      project_id  TEXT,
+      user_id     TEXT,
+      hostname    TEXT,
+      mac         TEXT,
+      cpu         REAL,
+      mem         REAL,
+      disk        REAL,
+      uptime      INTEGER,
+      latitude    REAL,
+      longitude   REAL,
+      status      TEXT NOT NULL DEFAULT 'pending',
+      token_hash  TEXT,
+      created_at  TEXT NOT NULL,
+      enrolled_at TEXT,
+      last_seen   TEXT
+    );
+  `);
+  
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS enroll_sessions (session_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, claimed_at TEXT);`);
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS asset_events (id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id TEXT NOT NULL, ts TEXT NOT NULL, type TEXT NOT NULL, severity TEXT NOT NULL, detail TEXT);`);
   await sqlite.execute(`CREATE TABLE IF NOT EXISTS sessions (sid TEXT PRIMARY KEY, sess TEXT NOT NULL, expire INTEGER NOT NULL);`);
@@ -241,9 +267,14 @@ app.post("/api/enroll/:session_id/claim", async (req, res) => {
   res.json({ ok: true, asset_id: s.asset_id });
 });
 
+// UPDATED: Heartbeat now saves latitude and longitude
 app.post("/api/heartbeat", requireAssetToken, async (req, res) => {
   const b = req.body;
-  await sqlite.execute({ sql: "UPDATE assets SET status = 'online', last_seen = ?, cpu = ?, mem = ?, disk = ?, uptime = ? WHERE asset_id = ?", args: [nowIso(), b.cpu, b.mem, b.disk, b.uptime, req.asset.asset_id] });
+  await sqlite.execute({ 
+    sql: "UPDATE assets SET status = 'online', last_seen = ?, cpu = ?, mem = ?, disk = ?, uptime = ?, latitude = ?, longitude = ? WHERE asset_id = ?", 
+    args: [nowIso(), b.cpu, b.mem, b.disk, b.uptime, b.latitude, b.longitude, req.asset.asset_id] 
+  });
+  
   if (b.cpu > 80 || b.mem > 80) {
     await sqlite.execute({ sql: "INSERT INTO asset_events (asset_id, ts, type, severity, detail) VALUES (?, ?, 'high_usage', 'medium', ?)", args: [req.asset.asset_id, nowIso(), `CPU: ${b.cpu}%, RAM: ${b.mem}%`] });
   }
